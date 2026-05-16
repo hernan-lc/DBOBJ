@@ -1430,38 +1430,140 @@ impl Database {
     pub fn select(
         &self,
         table_name: String,
-        query_obj: serde_json::Value,
+        query_obj: Option<serde_json::Value>,
+        columns: Option<Vec<String>>,
+        limit: Option<u32>,
+        offset: Option<u32>,
     ) -> Result<serde_json::Value> {
+        let table_lock = self.inner.get_table(&table_name).ok_or_else(|| {
+            napi::Error::from_reason(format!("Table {} not found", table_name))
+        })?;
+        let table = table_lock.read();
+
+        let mut rows = if let Some(q) = query_obj {
+            let expr = json_to_expr(&q)?;
+            self.inner
+                .query_expr(&table_name, expr)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?
+        } else {
+            // Full scan if no query provided
+            (0..table.ids.len())
+                .map(|i| table.get_row_by_index(i))
+                .collect()
+        };
+
+        // Apply OFFSET / LIMIT
+        let start = offset.unwrap_or(0) as usize;
+        if start >= rows.len() {
+            return Ok(serde_json::Value::Array(vec![]));
+        }
+        let end = (start + limit.unwrap_or(u32::MAX) as usize).min(rows.len());
+        rows = rows[start..end].to_vec();
+
+        let mut results = Vec::with_capacity(rows.len());
+
+        // Optimization: build column indices once
+        let col_info: Vec<(usize, String)> = if let Some(requested_cols) = columns {
+            requested_cols
+                .into_iter()
+                .filter_map(|name| {
+                    if name == "id" {
+                        Some((usize::MAX, name))
+                    } else {
+                        table.column_map.get(&name).map(|&idx| (idx, name))
+                    }
+                })
+                .collect()
+        } else {
+            let mut info = Vec::with_capacity(table.num_columns + 1);
+            info.push((usize::MAX, "id".to_string()));
+            for (idx, col_def) in table.schema.columns.iter().enumerate() {
+                info.push((idx, col_def.name.to_string()));
+            }
+            info
+        };
+
+        for row in rows {
+            let mut map = serde_json::Map::with_capacity(col_info.len());
+            for (idx, name) in &col_info {
+                if *idx == usize::MAX {
+                    let id_val = match &row.id {
+                        dbobj::Id::Integer(id) => serde_json::Value::Number((*id).into()),
+                        dbobj::Id::String(s) => serde_json::Value::String(s.to_string()),
+                    };
+                    map.insert(name.clone(), id_val);
+                } else {
+                    let val = &row.data[*idx];
+                    let json_val = query::db_value_to_json(val, &table);
+                    map.insert(name.clone(), json_val);
+                }
+            }
+            results.push(serde_json::Value::Object(map));
+        }
+        Ok(serde_json::Value::Array(results))
+    }
+
+    #[napi]
+    pub fn update_structured(
+        &self,
+        table_name: String,
+        query_obj: serde_json::Value,
+        values_obj: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<u32> {
+        let table_lock = self.inner.get_table(&table_name).ok_or_else(|| {
+            napi::Error::from_reason(format!("Table {} not found", table_name))
+        })?;
+        let mut table = table_lock.write();
+        if table.is_sequential_ids {
+            table.is_sequential_ids = false;
+            let ids = table.ids.clone();
+            for (i, id) in ids.into_iter().enumerate() {
+                table.id_map.insert(id, i);
+            }
+        }
+        drop(table);
+
+        let expr = json_to_expr(&query_obj)?;
+
+        let ids: Vec<_> = {
+            let rows = self
+                .inner
+                .query_expr(&table_name, expr)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            rows.into_iter().map(|r| r.id).collect()
+        };
+
+        let mut count = 0;
+        for id in ids {
+            let mut row_data = dbobj::RowData::default();
+            for (k, v) in &values_obj {
+                row_data.insert(k.clone().into(), json_to_db_value(Some(v.clone())));
+            }
+            self.inner
+                .update_row(&table_name, &id, row_data)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            count += 1;
+        }
+        self.save_if_needed();
+        Ok(count)
+    }
+
+    #[napi]
+    pub fn delete_structured(&self, table_name: String, query_obj: serde_json::Value) -> Result<u32> {
         let expr = json_to_expr(&query_obj)?;
         let rows = self
             .inner
             .query_expr(&table_name, expr)
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
-        let table_lock = self.inner.get_table(&table_name).ok_or_else(|| {
-            napi::Error::from_reason(format!("Table {} not found", table_name))
-        })?;
-        let table = table_lock.read();
+        let ids: Vec<_> = rows.into_iter().map(|r| r.id).collect();
+        let deleted = self
+            .inner
+            .delete_batch(&table_name, &ids)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
-        let mut results = Vec::with_capacity(rows.len());
-        for row in rows {
-            let mut map = serde_json::Map::with_capacity(table.num_columns + 1);
-            match &row.id {
-                dbobj::Id::Integer(id) => {
-                    map.insert("id".into(), serde_json::Value::Number((*id).into()));
-                }
-                dbobj::Id::String(s) => {
-                    map.insert("id".into(), serde_json::Value::String(s.to_string()));
-                }
-            }
-            for (col_idx, col_def) in table.schema.columns.iter().enumerate() {
-                let val = &row.data[col_idx];
-                let json_val = query::db_value_to_json(val, &table);
-                map.insert(col_def.name.to_string(), json_val);
-            }
-            results.push(serde_json::Value::Object(map));
-        }
-        Ok(serde_json::Value::Array(results))
+        self.save_if_needed();
+        Ok(deleted)
     }
 
     #[napi]

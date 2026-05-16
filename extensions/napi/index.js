@@ -584,3 +584,15 @@ module.exports.PreparedStatement = nativeBinding.PreparedStatement
 module.exports.Schema = nativeBinding.Schema
 module.exports.Transaction = nativeBinding.Transaction
 module.exports.DataType = nativeBinding.DataType
+
+const orm = require('./orm')
+module.exports.table = orm.table
+module.exports.eq = orm.eq
+module.exports.gt = orm.gt
+module.exports.gte = orm.gte
+module.exports.lt = orm.lt
+module.exports.lte = orm.lte
+module.exports.neq = orm.neq
+module.exports.and = orm.and
+module.exports.or = orm.or
+module.exports.createOrm = orm.createOrm

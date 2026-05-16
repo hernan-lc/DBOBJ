@@ -60,7 +60,9 @@ export declare class Database {
   avgColumn(tableName: string, columnName: string): number
   get schema(): Schema
   beginTransaction(): Transaction
-  select(tableName: string, queryObj: any): any
+  select(tableName: string, queryObj?: any | undefined | null, columns?: Array<string> | undefined | null, limit?: number | undefined | null, offset?: number | undefined | null): any
+  updateStructured(tableName: string, queryObj: any, valuesObj: Record<string, any>): number
+  deleteStructured(tableName: string, queryObj: any): number
   executeSql(sql: string): any
   query(sql: string, params?: Array<any | undefined | null> | undefined | null): PreparedStatement
   prepare(sql: string, params?: Array<any | undefined | null> | undefined | null): PreparedStatement
