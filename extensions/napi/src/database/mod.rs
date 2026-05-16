@@ -170,6 +170,62 @@ pub(crate) fn object_to_db_row(
     Ok(row)
 }
 
+pub(crate) fn json_to_expr(v: &serde_json::Value) -> Result<dbobj::Expr> {
+    match v {
+        serde_json::Value::Object(map) => {
+            if let Some(col) = map.get("column") {
+                if let Some(name) = col.as_str() {
+                    return Ok(dbobj::Expr::Column(name.into()));
+                }
+            }
+            if let Some(lit) = map.get("literal") {
+                return Ok(dbobj::Expr::Literal(json_to_db_value(Some(lit.clone()))));
+            }
+            if let Some(op_val) = map.get("op").and_then(|o| o.as_str()) {
+                let op = match op_val.to_lowercase().as_str() {
+                    "eq" => dbobj::Operator::Eq,
+                    "neq" => dbobj::Operator::Neq,
+                    "gt" => dbobj::Operator::Gt,
+                    "gte" => dbobj::Operator::Gte,
+                    "lt" => dbobj::Operator::Lt,
+                    "lte" => dbobj::Operator::Lte,
+                    "and" => dbobj::Operator::And,
+                    "or" => dbobj::Operator::Or,
+                    "like" => dbobj::Operator::Like,
+                    _ => {
+                        return Err(napi::Error::from_reason(format!(
+                            "Unknown operator: {}",
+                            op_val
+                        )))
+                    }
+                };
+                let left = map.get("left").ok_or_else(|| {
+                    napi::Error::from_reason(format!("Missing 'left' for operator {}", op_val))
+                })?;
+                let right = map.get("right").ok_or_else(|| {
+                    napi::Error::from_reason(format!("Missing 'right' for operator {}", op_val))
+                })?;
+                return Ok(dbobj::Expr::Binary(
+                    Box::new(json_to_expr(left)?),
+                    op,
+                    Box::new(json_to_expr(right)?),
+                ));
+            }
+            if let Some(not) = map.get("not") {
+                return Ok(dbobj::Expr::Not(Box::new(json_to_expr(not)?)));
+            }
+            Err(napi::Error::from_reason(format!(
+                "Invalid expression object: {:?}",
+                v
+            )))
+        }
+        _ => Err(napi::Error::from_reason(format!(
+            "Invalid expression type: {:?}",
+            v
+        ))),
+    }
+}
+
 #[napi]
 pub struct Database {
     pub(crate) inner: Arc<CoreDatabase>,
@@ -1369,6 +1425,44 @@ impl Database {
     }
 
     // ── SQL ──────────────────────────────────────────────────────────
+
+    #[napi]
+    pub fn select(
+        &self,
+        table_name: String,
+        query_obj: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let expr = json_to_expr(&query_obj)?;
+        let rows = self
+            .inner
+            .query_expr(&table_name, expr)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+        let table_lock = self.inner.get_table(&table_name).ok_or_else(|| {
+            napi::Error::from_reason(format!("Table {} not found", table_name))
+        })?;
+        let table = table_lock.read();
+
+        let mut results = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut map = serde_json::Map::with_capacity(table.num_columns + 1);
+            match &row.id {
+                dbobj::Id::Integer(id) => {
+                    map.insert("id".into(), serde_json::Value::Number((*id).into()));
+                }
+                dbobj::Id::String(s) => {
+                    map.insert("id".into(), serde_json::Value::String(s.to_string()));
+                }
+            }
+            for (col_idx, col_def) in table.schema.columns.iter().enumerate() {
+                let val = &row.data[col_idx];
+                let json_val = query::db_value_to_json(val, &table);
+                map.insert(col_def.name.to_string(), json_val);
+            }
+            results.push(serde_json::Value::Object(map));
+        }
+        Ok(serde_json::Value::Array(results))
+    }
 
     #[napi]
     pub fn execute_sql(&self, sql: String) -> Result<serde_json::Value> {

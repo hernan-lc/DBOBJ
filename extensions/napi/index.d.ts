@@ -60,6 +60,7 @@ export declare class Database {
   avgColumn(tableName: string, columnName: string): number
   get schema(): Schema
   beginTransaction(): Transaction
+  select(tableName: string, queryObj: QueryExpr): Array<any>
   executeSql(sql: string): any
   query(sql: string, params?: Array<any | undefined | null> | undefined | null): PreparedStatement
   prepare(sql: string, params?: Array<any | undefined | null> | undefined | null): PreparedStatement
