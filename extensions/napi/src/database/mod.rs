@@ -1432,6 +1432,7 @@ impl Database {
         table_name: String,
         query_obj: Option<serde_json::Value>,
         columns: Option<Vec<String>>,
+        order_by: Option<Vec<serde_json::Value>>,
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<serde_json::Value> {
@@ -1451,6 +1452,38 @@ impl Database {
                 .map(|i| table.get_row_by_index(i))
                 .collect()
         };
+
+        // Apply OrderBy
+        if let Some(orders) = order_by {
+            rows.sort_by(|a, b| {
+                for order in &orders {
+                    if let Some(obj) = order.as_object() {
+                        let col_name = obj.get("column").and_then(|c| c.as_str()).unwrap_or("");
+                        let desc = obj.get("desc").and_then(|d| d.as_bool()).unwrap_or(false);
+
+                        let col_idx = if col_name == "id" {
+                            Some(usize::MAX)
+                        } else {
+                            table.column_map.get(col_name).copied()
+                        };
+
+                        if let Some(idx) = col_idx {
+                            let (va, vb) = if idx == usize::MAX {
+                                (a.id.to_value(), b.id.to_value())
+                            } else {
+                                (a.data[idx].clone(), b.data[idx].clone())
+                            };
+
+                            let cmp = va.cmp(&vb);
+                            if cmp != std::cmp::Ordering::Equal {
+                                return if desc { cmp.reverse() } else { cmp };
+                            }
+                        }
+                    }
+                }
+                std::cmp::Ordering::Equal
+            });
+        }
 
         // Apply OFFSET / LIMIT
         let start = offset.unwrap_or(0) as usize;
