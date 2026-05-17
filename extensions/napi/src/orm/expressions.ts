@@ -52,3 +52,19 @@ export function isNotNull(col: Column<unknown>): QueryExpr {
 export function like(col: Column<string>, pattern: string): QueryExpr {
   return { op: "like", left: { column: col.name }, right: { literal: pattern } };
 }
+
+export function inArray<T>(col: Column<T>, values: T[]): QueryExpr {
+  return { op: "in", left: { column: col.name }, right: { literal: JSON.stringify(values) } };
+}
+
+export function notInArray<T>(col: Column<T>, values: T[]): QueryExpr {
+  return { not: inArray(col, values) };
+}
+
+export function between<T>(col: Column<T>, min: T, max: T): QueryExpr {
+  return and(gte(col, min), lte(col, max));
+}
+
+export function notBetween<T>(col: Column<T>, min: T, max: T): QueryExpr {
+  return { not: between(col, min, max) };
+}

@@ -192,6 +192,7 @@ pub(crate) fn json_to_expr(v: &serde_json::Value) -> Result<dbobj::Expr> {
                     "and" => dbobj::Operator::And,
                     "or" => dbobj::Operator::Or,
                     "like" => dbobj::Operator::Like,
+                    "in" => dbobj::Operator::In,
                     _ => {
                         return Err(napi::Error::from_reason(format!(
                             "Unknown operator: {}",

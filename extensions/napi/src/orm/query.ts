@@ -10,7 +10,7 @@ export class RelationalQueryBuilder<T extends Table<any>> {
     limit?: number,
     offset?: number,
     orderBy?: Array<any>,
-    with?: Record<string, boolean | { where?: QueryExpr }>
+    with?: Record<string, boolean | { where?: QueryExpr, limit?: number }>
   }): any[] {
     let builder = new SelectBuilder(this.db, this.table);
     if (options?.where) builder.where(options.where);
@@ -20,15 +20,26 @@ export class RelationalQueryBuilder<T extends Table<any>> {
     const results = builder.execute();
 
     if (options?.with) {
-        // Simple implementation for Relation fetching
         for (const relationName in options.with) {
+            const relationConfig = options.with[relationName];
             const relationTable = (this as any)._relations?.[relationName];
             if (relationTable) {
                 for (const row of results) {
-                    const related = new SelectBuilder(this.db, relationTable)
-                        .where({ op: "eq", left: { column: relationTable.columns.userId.name }, right: { literal: row.id } })
-                        .execute();
-                    row[relationName] = related;
+                    const relatedBuilder = new SelectBuilder(this.db, relationTable);
+
+                    const foreignKeyCol = (this as any)._foreignKeys?.[relationName] || "userId";
+                    let filter: QueryExpr = { op: "eq", left: { column: foreignKeyCol }, right: { literal: row.id } };
+
+                    if (typeof relationConfig === "object" && relationConfig.where) {
+                        filter = { op: "and", left: filter, right: relationConfig.where };
+                    }
+                    relatedBuilder.where(filter);
+
+                    if (typeof relationConfig === "object" && relationConfig.limit) {
+                        relatedBuilder.limit(relationConfig.limit);
+                    }
+
+                    row[relationName] = relatedBuilder.execute();
                 }
             }
         }
