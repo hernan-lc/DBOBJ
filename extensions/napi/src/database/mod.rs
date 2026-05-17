@@ -170,6 +170,63 @@ pub(crate) fn object_to_db_row(
     Ok(row)
 }
 
+pub(crate) fn json_to_expr(v: &serde_json::Value) -> Result<dbobj::Expr> {
+    match v {
+        serde_json::Value::Object(map) => {
+            if let Some(col) = map.get("column") {
+                if let Some(name) = col.as_str() {
+                    return Ok(dbobj::Expr::Column(name.into()));
+                }
+            }
+            if let Some(lit) = map.get("literal") {
+                return Ok(dbobj::Expr::Literal(json_to_db_value(Some(lit.clone()))));
+            }
+            if let Some(op_val) = map.get("op").and_then(|o| o.as_str()) {
+                let op = match op_val.to_lowercase().as_str() {
+                    "eq" => dbobj::Operator::Eq,
+                    "neq" => dbobj::Operator::Neq,
+                    "gt" => dbobj::Operator::Gt,
+                    "gte" => dbobj::Operator::Gte,
+                    "lt" => dbobj::Operator::Lt,
+                    "lte" => dbobj::Operator::Lte,
+                    "and" => dbobj::Operator::And,
+                    "or" => dbobj::Operator::Or,
+                    "like" => dbobj::Operator::Like,
+                    "in" => dbobj::Operator::In,
+                    _ => {
+                        return Err(napi::Error::from_reason(format!(
+                            "Unknown operator: {}",
+                            op_val
+                        )))
+                    }
+                };
+                let left = map.get("left").ok_or_else(|| {
+                    napi::Error::from_reason(format!("Missing 'left' for operator {}", op_val))
+                })?;
+                let right = map.get("right").ok_or_else(|| {
+                    napi::Error::from_reason(format!("Missing 'right' for operator {}", op_val))
+                })?;
+                return Ok(dbobj::Expr::Binary(
+                    Box::new(json_to_expr(left)?),
+                    op,
+                    Box::new(json_to_expr(right)?),
+                ));
+            }
+            if let Some(not) = map.get("not") {
+                return Ok(dbobj::Expr::Not(Box::new(json_to_expr(not)?)));
+            }
+            Err(napi::Error::from_reason(format!(
+                "Invalid expression object: {:?}",
+                v
+            )))
+        }
+        _ => Err(napi::Error::from_reason(format!(
+            "Invalid expression type: {:?}",
+            v
+        ))),
+    }
+}
+
 #[napi]
 pub struct Database {
     pub(crate) inner: Arc<CoreDatabase>,
@@ -653,7 +710,7 @@ impl Database {
         &self,
         table_name: String,
         values: Vec<Option<serde_json::Value>>,
-    ) -> Result<bool> {
+    ) -> Result<i64> {
         insert::insert_row(self, table_name, values)
     }
 
@@ -1369,6 +1426,262 @@ impl Database {
     }
 
     // ── SQL ──────────────────────────────────────────────────────────
+
+    #[napi]
+    pub fn select(
+        &self,
+        table_name: String,
+        query_obj: Option<serde_json::Value>,
+        columns: Option<Vec<String>>,
+        order_by: Option<Vec<serde_json::Value>>,
+        join_obj: Option<serde_json::Value>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<serde_json::Value> {
+        let table_lock = self.inner.get_table(&table_name).ok_or_else(|| {
+            napi::Error::from_reason(format!("Table {} not found", table_name))
+        })?;
+        let table = table_lock.read();
+
+        if let Some(join) = join_obj {
+            let obj = join.as_object().ok_or_else(|| napi::Error::from_reason("Join must be an object"))?;
+            let other_table = obj.get("table").and_then(|t| t.as_str()).ok_or_else(|| napi::Error::from_reason("Join requires 'table'"))?;
+            let on_left = obj.get("onLeft").and_then(|t| t.as_str()).ok_or_else(|| napi::Error::from_reason("Join requires 'onLeft'"))?;
+            let on_right = obj.get("onRight").and_then(|t| t.as_str()).ok_or_else(|| napi::Error::from_reason("Join requires 'onRight'"))?;
+            let is_left = obj.get("type").and_then(|t| t.as_str()) == Some("left");
+
+            let joined_rows = self.inner.hash_join(&table_name, on_left, other_table, on_right)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+            let other_lock = self.inner.get_table(other_table).ok_or_else(|| {
+                napi::Error::from_reason(format!("Table {} not found", other_table))
+            })?;
+            let other_table_ref = other_lock.read();
+
+            let filtered_rows = if let Some(q) = query_obj {
+                let expr = json_to_expr(&q)?;
+                let mut results = Vec::new();
+
+                // For joined rows, we need to map column names to include the table prefix
+                let mut mapping = dbobj::FastHashMap::default();
+                for (i, col) in table.schema.columns.iter().enumerate() {
+                    mapping.insert(format!("{}.{}", table_name, col.name), i);
+                    mapping.insert(col.name.to_string(), i);
+                }
+
+                for (r1, r2) in joined_rows {
+                    if expr.is_true(&r1, &mapping, &table) {
+                        results.push((r1, r2));
+                    }
+                }
+                results
+            } else {
+                joined_rows
+            };
+            let other_table_ref = other_lock.read();
+
+            let mut results = Vec::with_capacity(filtered_rows.len());
+            for (r1, r2) in filtered_rows {
+                let mut map = serde_json::Map::new();
+
+                for (i, col) in table.schema.columns.iter().enumerate() {
+                    let key = format!("{}.{}", table_name, col.name);
+                    map.insert(key, query::db_value_to_json(&r1.data[i], &table));
+                }
+                for (i, col) in other_table_ref.schema.columns.iter().enumerate() {
+                    let key = format!("{}.{}", other_table, col.name);
+                    map.insert(key, query::db_value_to_json(&r2.data[i], &other_table_ref));
+                }
+                results.push(serde_json::Value::Object(map));
+            }
+
+            if is_left {
+                // Simplified Left Join: Add primary table rows that had no match
+                let joined_ids: std::collections::HashSet<serde_json::Value> = results.iter()
+                    .filter_map(|m| m.get(&format!("{}.id", table_name)).cloned())
+                    .collect();
+
+                let mut extra_rows = Vec::new();
+                for row_idx in 0..table.ids.len() {
+                    let id_val = match &table.ids[row_idx] {
+                        dbobj::Id::Integer(id) => serde_json::Value::Number((*id).into()),
+                        dbobj::Id::String(s) => serde_json::Value::String(s.to_string()),
+                    };
+                    if !joined_ids.contains(&id_val) {
+                        let r1 = table.get_row_by_index(row_idx);
+                        let mut map = serde_json::Map::new();
+                        for (i, col) in table.schema.columns.iter().enumerate() {
+                            map.insert(format!("{}.{}", table_name, col.name), query::db_value_to_json(&r1.data[i], &table));
+                        }
+                        for col in &other_table_ref.schema.columns {
+                            map.insert(format!("{}.{}", other_table, col.name), serde_json::Value::Null);
+                        }
+                        extra_rows.push(serde_json::Value::Object(map));
+                    }
+                }
+                results.extend(extra_rows);
+            }
+
+            return Ok(serde_json::Value::Array(results));
+        }
+
+        let mut rows = if let Some(q) = query_obj {
+            let expr = json_to_expr(&q)?;
+            self.inner
+                .query_expr(&table_name, expr)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?
+        } else {
+            // Full scan if no query provided
+            (0..table.ids.len())
+                .map(|i| table.get_row_by_index(i))
+                .collect()
+        };
+
+        // Apply OrderBy
+        if let Some(orders) = order_by {
+            rows.sort_by(|a, b| {
+                for order in &orders {
+                    if let Some(obj) = order.as_object() {
+                        let col_name = obj.get("column").and_then(|c| c.as_str()).unwrap_or("");
+                        let desc = obj.get("desc").and_then(|d| d.as_bool()).unwrap_or(false);
+
+                        let col_idx = if col_name == "id" {
+                            Some(usize::MAX)
+                        } else {
+                            table.column_map.get(col_name).copied()
+                        };
+
+                        if let Some(idx) = col_idx {
+                            let (va, vb) = if idx == usize::MAX {
+                                (a.id.to_value(), b.id.to_value())
+                            } else {
+                                (a.data[idx].clone(), b.data[idx].clone())
+                            };
+
+                            let cmp = va.cmp(&vb);
+                            if cmp != std::cmp::Ordering::Equal {
+                                return if desc { cmp.reverse() } else { cmp };
+                            }
+                        }
+                    }
+                }
+                std::cmp::Ordering::Equal
+            });
+        }
+
+        // Apply OFFSET / LIMIT
+        let start = offset.unwrap_or(0) as usize;
+        if start >= rows.len() {
+            return Ok(serde_json::Value::Array(vec![]));
+        }
+        let end = (start + limit.unwrap_or(u32::MAX) as usize).min(rows.len());
+        rows = rows[start..end].to_vec();
+
+        let mut results = Vec::with_capacity(rows.len());
+
+        // Optimization: build column indices once
+        let col_info: Vec<(usize, String)> = if let Some(requested_cols) = columns {
+            requested_cols
+                .into_iter()
+                .filter_map(|name| {
+                    if name == "id" {
+                        Some((usize::MAX, name))
+                    } else {
+                        table.column_map.get(&name).map(|&idx| (idx, name))
+                    }
+                })
+                .collect()
+        } else {
+            let mut info = Vec::with_capacity(table.num_columns + 1);
+            info.push((usize::MAX, "id".to_string()));
+            for (idx, col_def) in table.schema.columns.iter().enumerate() {
+                info.push((idx, col_def.name.to_string()));
+            }
+            info
+        };
+
+        for row in rows {
+            let mut map = serde_json::Map::with_capacity(col_info.len());
+            for (idx, name) in &col_info {
+                if *idx == usize::MAX {
+                    let id_val = match &row.id {
+                        dbobj::Id::Integer(id) => serde_json::Value::Number((*id).into()),
+                        dbobj::Id::String(s) => serde_json::Value::String(s.to_string()),
+                    };
+                    map.insert(name.clone(), id_val);
+                } else {
+                    let val = &row.data[*idx];
+                    let json_val = query::db_value_to_json(val, &table);
+                    map.insert(name.clone(), json_val);
+                }
+            }
+            results.push(serde_json::Value::Object(map));
+        }
+        Ok(serde_json::Value::Array(results))
+    }
+
+    #[napi]
+    pub fn update_structured(
+        &self,
+        table_name: String,
+        query_obj: serde_json::Value,
+        values_obj: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<u32> {
+        let table_lock = self.inner.get_table(&table_name).ok_or_else(|| {
+            napi::Error::from_reason(format!("Table {} not found", table_name))
+        })?;
+        let mut table = table_lock.write();
+        if table.is_sequential_ids {
+            table.is_sequential_ids = false;
+            let ids = table.ids.clone();
+            for (i, id) in ids.into_iter().enumerate() {
+                table.id_map.insert(id, i);
+            }
+        }
+        drop(table);
+
+        let expr = json_to_expr(&query_obj)?;
+
+        let ids: Vec<_> = {
+            let rows = self
+                .inner
+                .query_expr(&table_name, expr)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            rows.into_iter().map(|r| r.id).collect()
+        };
+
+        let mut count = 0;
+        for id in ids {
+            let mut row_data = dbobj::RowData::default();
+            for (k, v) in &values_obj {
+                row_data.insert(k.clone().into(), json_to_db_value(Some(v.clone())));
+            }
+            self.inner
+                .update_row(&table_name, &id, row_data)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            count += 1;
+        }
+        self.save_if_needed();
+        Ok(count)
+    }
+
+    #[napi]
+    pub fn delete_structured(&self, table_name: String, query_obj: serde_json::Value) -> Result<u32> {
+        let expr = json_to_expr(&query_obj)?;
+        let rows = self
+            .inner
+            .query_expr(&table_name, expr)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+        let ids: Vec<_> = rows.into_iter().map(|r| r.id).collect();
+        let deleted = self
+            .inner
+            .delete_batch(&table_name, &ids)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+        self.save_if_needed();
+        Ok(deleted)
+    }
 
     #[napi]
     pub fn execute_sql(&self, sql: String) -> Result<serde_json::Value> {

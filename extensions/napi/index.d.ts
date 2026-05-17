@@ -14,7 +14,7 @@ export declare class Database {
   insertRowBool(tableName: string, values: Array<boolean>): boolean
   insertRowFloat(tableName: string, values: Array<number>): boolean
   insertObject(tableName: string, obj: object, dynamicSchema: DynamicSchema, schemaName: string): boolean
-  insertRow(tableName: string, values: Array<any | undefined | null>): boolean
+  insertRow(tableName: string, values: Array<any | undefined | null>): number
   insertOrReplace(tableName: string, values: Array<any | undefined | null>, uniqueColumn: string): boolean
   insertBatchString(tableName: string, values: Array<string>, numColumns: number): boolean
   insertBatchBool(tableName: string, values: Array<boolean>, numColumns: number): boolean
@@ -60,6 +60,9 @@ export declare class Database {
   avgColumn(tableName: string, columnName: string): number
   get schema(): Schema
   beginTransaction(): Transaction
+  select(tableName: string, queryObj?: any | undefined | null, columns?: Array<string> | undefined | null, orderBy?: Array<any> | undefined | null, joinObj?: any | undefined | null, limit?: number | undefined | null, offset?: number | undefined | null): any
+  updateStructured(tableName: string, queryObj: any, valuesObj: Record<string, any>): number
+  deleteStructured(tableName: string, queryObj: any): number
   executeSql(sql: string): any
   query(sql: string, params?: Array<any | undefined | null> | undefined | null): PreparedStatement
   prepare(sql: string, params?: Array<any | undefined | null> | undefined | null): PreparedStatement

@@ -577,10 +577,22 @@ if (!nativeBinding) {
 
 module.exports = nativeBinding
 module.exports.Cursor = nativeBinding.Cursor
-module.exports.Database = nativeBinding.Database
+const { Database } = nativeBinding;
+const originalCreateTable = Database.prototype.createTable;
+Database.prototype.createTable = function(nameOrTable, columns) {
+  if (typeof nameOrTable === 'object' && nameOrTable.name && nameOrTable.getDefinitions) {
+    return originalCreateTable.call(this, nameOrTable.name, nameOrTable.getDefinitions());
+  }
+  return originalCreateTable.call(this, nameOrTable, columns);
+};
+
+module.exports.Database = Database
 module.exports.DbError = nativeBinding.DbError
 module.exports.DynamicSchema = nativeBinding.DynamicSchema
 module.exports.PreparedStatement = nativeBinding.PreparedStatement
 module.exports.Schema = nativeBinding.Schema
 module.exports.Transaction = nativeBinding.Transaction
 module.exports.DataType = nativeBinding.DataType
+
+const orm = require('./src/orm/index.js')
+Object.assign(module.exports, orm)

@@ -22,6 +22,7 @@ pub enum Operator {
     Or,
     Like,
     Not,
+    In,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +78,18 @@ impl Expr {
                         } else {
                             Value::Boolean(false)
                         }
+                    }
+                    Operator::In => {
+                        if let Value::String(s) = r {
+                            if let Ok(serde_json::Value::Array(arr)) = serde_json::from_str(s.as_str()) {
+                                for val in arr {
+                                    if l == crate::core::Database::json_to_db_value(Some(val)) {
+                                        return Value::Boolean(true);
+                                    }
+                                }
+                            }
+                        }
+                        Value::Boolean(false)
                     }
                 }
             }
@@ -198,6 +211,18 @@ impl Expr {
                         } else {
                             Value::Boolean(false)
                         }
+                    }
+                    Operator::In => {
+                        if let Value::String(s) = r {
+                            if let Ok(serde_json::Value::Array(arr)) = serde_json::from_str(s.as_str()) {
+                                for val in arr {
+                                    if l == crate::core::Database::json_to_db_value(Some(val)) {
+                                        return Value::Boolean(true);
+                                    }
+                                }
+                            }
+                        }
+                        Value::Boolean(false)
                     }
                 }
             }

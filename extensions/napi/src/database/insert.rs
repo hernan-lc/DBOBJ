@@ -100,13 +100,16 @@ pub(crate) fn insert_row(
     db: &Database,
     table_name: String,
     values: Vec<Option<serde_json::Value>>,
-) -> Result<bool, napi::Error> {
+) -> Result<i64, napi::Error> {
     let row_values: Vec<Value> = values.into_iter().map(super::json_to_db_value).collect();
-    db.inner
+    let id = db.inner
         .insert_values(&table_name, row_values)
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     db.save_if_needed();
-    Ok(true)
+    match id {
+        dbobj::Id::Integer(i) => Ok(i as i64),
+        _ => Ok(0)
+    }
 }
 
 pub(crate) fn insert_batch_string(

@@ -146,6 +146,29 @@ impl Database {
         storage.load_database()
     }
 
+    pub fn json_to_db_value(val: Option<serde_json::Value>) -> Value {
+        match val {
+            None => Value::Null,
+            Some(v) => match v {
+                serde_json::Value::Null => Value::Null,
+                serde_json::Value::Bool(b) => Value::Boolean(b),
+                serde_json::Value::Number(n) => {
+                    if let Some(i) = n.as_i64() {
+                        Value::Integer(i)
+                    } else if let Some(f) = n.as_f64() {
+                        Value::Float(f)
+                    } else {
+                        Value::Null
+                    }
+                }
+                serde_json::Value::String(s) => Value::String(s.into()),
+                serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
+                    Value::String(serde_json::to_string(&v).unwrap_or_default().into())
+                }
+            },
+        }
+    }
+
     pub fn with_wal(mut self, wal: crate::storage::wal::Wal) -> Self {
         self.wal = Some(Arc::new(RwLock::new(wal)));
         self

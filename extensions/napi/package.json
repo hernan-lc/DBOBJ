@@ -38,7 +38,10 @@
     "build": "bunx napi build --release",
     "build:native": "bun build.ts --native",
     "build:all": "bun build.ts",
-    "test": "bun test dbobj.test.ts",
+    "test": "bun test",
     "prepublishOnly": "bun run build:all"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.2"
   }
 }
