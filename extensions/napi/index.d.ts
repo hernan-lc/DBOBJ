@@ -14,7 +14,7 @@ export declare class Database {
   insertRowBool(tableName: string, values: Array<boolean>): boolean
   insertRowFloat(tableName: string, values: Array<number>): boolean
   insertObject(tableName: string, obj: object, dynamicSchema: DynamicSchema, schemaName: string): boolean
-  insertRow(tableName: string, values: Array<any | undefined | null>): boolean
+  insertRow(tableName: string, values: Array<any | undefined | null>): number
   insertOrReplace(tableName: string, values: Array<any | undefined | null>, uniqueColumn: string): boolean
   insertBatchString(tableName: string, values: Array<string>, numColumns: number): boolean
   insertBatchBool(tableName: string, values: Array<boolean>, numColumns: number): boolean

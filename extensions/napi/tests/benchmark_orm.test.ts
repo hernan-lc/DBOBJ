@@ -18,17 +18,12 @@ test("Benchmark: DBOBJ Join vs Drizzle SQL Join", () => {
 
   // --- DBOBJ Setup ---
   const dbobjDb = new Database(":memory:");
-  dbobjDb.createTable("users", [
-    { name: "id", dataType: DataType.Integer },
-    { name: "name", dataType: DataType.String },
-  ]);
-  dbobjDb.createTable("posts", [
-    { name: "id", dataType: DataType.Integer },
-    { name: "userId", dataType: DataType.Integer },
-    { name: "title", dataType: DataType.String },
-  ]);
   const users = sqliteTable("users", { id: integer("id").primaryKey(), name: text("name") });
   const posts = sqliteTable("posts", { id: integer("id").primaryKey(), userId: integer("userId"), title: text("title") });
+
+  dbobjDb.createTable(users);
+  dbobjDb.createTable(posts);
+
   const dbobj = createOrm(dbobjDb);
 
   // --- Bun SQLite + Drizzle Setup ---

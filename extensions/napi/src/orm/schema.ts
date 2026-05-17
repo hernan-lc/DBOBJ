@@ -85,3 +85,31 @@ export function real(name: string): Column<number> {
 export function blob(name: string): Column<Uint8Array> {
   return { name, type: DataType.Blob, _type: new Uint8Array() };
 }
+
+export interface Relation<T extends Table<any> = Table<any>> {
+  target: T;
+  type: "one" | "many";
+  foreignKey?: string;
+}
+
+export function relations<T extends Table<any>>(
+  table: T,
+  relationsConfig: (helpers: {
+    one: <U extends Table<any>>(target: U, config?: { fields: Column<any>[], references: Column<any>[] }) => Relation<U>,
+    many: <U extends Table<any>>(target: U) => Relation<U>
+  }) => Record<string, Relation>
+) {
+  const helpers = {
+    one: <U extends Table<any>>(target: U, config?: { fields: Column<any>[], references: Column<any>[] }) => ({
+      target,
+      type: "one" as const,
+      foreignKey: config?.fields[0]?.name
+    }),
+    many: <U extends Table<any>>(target: U) => ({
+      target,
+      type: "many" as const
+    })
+  };
+  (table as any)._relations = relationsConfig(helpers);
+  return table;
+}

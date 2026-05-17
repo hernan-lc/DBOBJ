@@ -18,16 +18,6 @@ const {
 
 test("Modular ORM: Schema and Select", () => {
   const db = new Database(":memory:");
-  db.createTable("users", [
-    { name: "id", dataType: DataType.Integer },
-    { name: "name", dataType: DataType.String },
-    { name: "age", dataType: DataType.Integer },
-    { name: "active", dataType: DataType.Boolean },
-  ]);
-
-  db.insertRow("users", [0, "Alice", 30, true]);
-  db.insertRow("users", [1, "Bob", 25, true]);
-  db.insertRow("users", [2, "Charlie", 35, false]);
 
   const users = sqliteTable("users", {
     id: integer("id").primaryKey(),
@@ -35,6 +25,12 @@ test("Modular ORM: Schema and Select", () => {
     age: integer("age"),
     active: boolean("active")
   });
+
+  db.createTable(users);
+
+  db.insertRow("users", [0, "Alice", 30, true]);
+  db.insertRow("users", [1, "Bob", 25, true]);
+  db.insertRow("users", [2, "Charlie", 35, false]);
 
   const orm = createOrm(db);
 
@@ -64,15 +60,14 @@ test("Modular ORM: Schema and Select", () => {
 
 test("Modular ORM: Update and Delete", () => {
   const db = new Database(":memory:");
-  db.createTable("posts", [
-    { name: "title", dataType: DataType.String },
-  ]);
-  db.insertRow("posts", ["Post 1"]); // ID 0
-  db.insertRow("posts", ["Post 2"]); // ID 1
-
   const posts = sqliteTable("posts", {
     title: text("title")
   });
+  db.createTable(posts);
+
+  db.insertRow("posts", ["Post 1"]); // ID 0
+  db.insertRow("posts", ["Post 2"]); // ID 1
+
   const orm = createOrm(db);
 
   // Update
@@ -90,15 +85,13 @@ test("Modular ORM: Update and Delete", () => {
 
 test("Modular ORM: Relational API", () => {
   const db = new Database(":memory:");
-  db.createTable("products", [
-    { name: "price", dataType: DataType.Integer },
-  ]);
-  db.insertRow("products", [100]); // ID 0
-  db.insertRow("products", [200]); // ID 1
-
   const products = sqliteTable("products", {
     price: integer("price")
   });
+  db.createTable(products);
+
+  db.insertRow("products", [100]); // ID 0
+  db.insertRow("products", [200]); // ID 1
 
   const query = createRelationalApi(db, { products });
 

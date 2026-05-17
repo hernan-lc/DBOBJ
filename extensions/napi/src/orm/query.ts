@@ -10,7 +10,8 @@ export class RelationalQueryBuilder<T extends Table<any>> {
     limit?: number,
     offset?: number,
     orderBy?: Array<any>,
-    with?: Record<string, boolean | { where?: QueryExpr, limit?: number }>
+    columns?: string[],
+    with?: Record<string, boolean | { where?: QueryExpr, limit?: number, orderBy?: Array<any>, columns?: string[] }>
   }): any[] {
     let builder = new SelectBuilder(this.db, this.table);
     if (options?.where) builder.where(options.where);
@@ -22,12 +23,13 @@ export class RelationalQueryBuilder<T extends Table<any>> {
     if (options?.with) {
         for (const relationName in options.with) {
             const relationConfig = options.with[relationName];
-            const relationTable = (this as any)._relations?.[relationName];
-            if (relationTable) {
+            const relation = (this.table as any)._relations?.[relationName];
+            if (relation) {
+                const relationTable = relation.target;
                 for (const row of results) {
                     const relatedBuilder = new SelectBuilder(this.db, relationTable);
 
-                    const foreignKeyCol = (this as any)._foreignKeys?.[relationName] || "userId";
+                    const foreignKeyCol = relation.foreignKey || "userId";
                     let filter: QueryExpr = { op: "eq", left: { column: foreignKeyCol }, right: { literal: row.id } };
 
                     if (typeof relationConfig === "object" && relationConfig.where) {
@@ -35,8 +37,10 @@ export class RelationalQueryBuilder<T extends Table<any>> {
                     }
                     relatedBuilder.where(filter);
 
-                    if (typeof relationConfig === "object" && relationConfig.limit) {
-                        relatedBuilder.limit(relationConfig.limit);
+                    if (typeof relationConfig === "object") {
+                        if (relationConfig.limit) relatedBuilder.limit(relationConfig.limit);
+                        if (relationConfig.orderBy) (relatedBuilder as any)._orderBy = relationConfig.orderBy;
+                        if (relationConfig.columns) (relatedBuilder as any)._columns = relationConfig.columns;
                     }
 
                     row[relationName] = relatedBuilder.execute();

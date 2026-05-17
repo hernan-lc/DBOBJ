@@ -710,7 +710,7 @@ impl Database {
         &self,
         table_name: String,
         values: Vec<Option<serde_json::Value>>,
-    ) -> Result<bool> {
+    ) -> Result<i64> {
         insert::insert_row(self, table_name, values)
     }
 
@@ -1448,6 +1448,7 @@ impl Database {
             let other_table = obj.get("table").and_then(|t| t.as_str()).ok_or_else(|| napi::Error::from_reason("Join requires 'table'"))?;
             let on_left = obj.get("onLeft").and_then(|t| t.as_str()).ok_or_else(|| napi::Error::from_reason("Join requires 'onLeft'"))?;
             let on_right = obj.get("onRight").and_then(|t| t.as_str()).ok_or_else(|| napi::Error::from_reason("Join requires 'onRight'"))?;
+            let is_left = obj.get("type").and_then(|t| t.as_str()) == Some("left");
 
             let joined_rows = self.inner.hash_join(&table_name, on_left, other_table, on_right)
                 .map_err(|e| napi::Error::from_reason(e.to_string()))?;
@@ -1483,18 +1484,44 @@ impl Database {
             for (r1, r2) in filtered_rows {
                 let mut map = serde_json::Map::new();
 
-                // Add fields from primary table with prefix
                 for (i, col) in table.schema.columns.iter().enumerate() {
                     let key = format!("{}.{}", table_name, col.name);
                     map.insert(key, query::db_value_to_json(&r1.data[i], &table));
                 }
-                // Add fields from joined table with prefix
                 for (i, col) in other_table_ref.schema.columns.iter().enumerate() {
                     let key = format!("{}.{}", other_table, col.name);
                     map.insert(key, query::db_value_to_json(&r2.data[i], &other_table_ref));
                 }
                 results.push(serde_json::Value::Object(map));
             }
+
+            if is_left {
+                // Simplified Left Join: Add primary table rows that had no match
+                let joined_ids: std::collections::HashSet<serde_json::Value> = results.iter()
+                    .filter_map(|m| m.get(&format!("{}.id", table_name)).cloned())
+                    .collect();
+
+                let mut extra_rows = Vec::new();
+                for row_idx in 0..table.ids.len() {
+                    let id_val = match &table.ids[row_idx] {
+                        dbobj::Id::Integer(id) => serde_json::Value::Number((*id).into()),
+                        dbobj::Id::String(s) => serde_json::Value::String(s.to_string()),
+                    };
+                    if !joined_ids.contains(&id_val) {
+                        let r1 = table.get_row_by_index(row_idx);
+                        let mut map = serde_json::Map::new();
+                        for (i, col) in table.schema.columns.iter().enumerate() {
+                            map.insert(format!("{}.{}", table_name, col.name), query::db_value_to_json(&r1.data[i], &table));
+                        }
+                        for col in &other_table_ref.schema.columns {
+                            map.insert(format!("{}.{}", other_table, col.name), serde_json::Value::Null);
+                        }
+                        extra_rows.push(serde_json::Value::Object(map));
+                    }
+                }
+                results.extend(extra_rows);
+            }
+
             return Ok(serde_json::Value::Array(results));
         }
 

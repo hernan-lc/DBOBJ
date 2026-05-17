@@ -45,23 +45,10 @@ test("Comprehensive Relational ORM Test", () => {
     content: text("content")
   });
 
-  // --- Database Setup ---
-  db.createTable("users", [
-    { name: "id", dataType: DataType.Integer },
-    { name: "name", dataType: DataType.String },
-    { name: "age", dataType: DataType.Integer },
-    { name: "active", dataType: DataType.Boolean },
-  ]);
-  db.createTable("posts", [
-    { name: "id", dataType: DataType.Integer },
-    { name: "userId", dataType: DataType.Integer },
-    { name: "title", dataType: DataType.String },
-  ]);
-  db.createTable("comments", [
-    { name: "id", dataType: DataType.Integer },
-    { name: "postId", dataType: DataType.Integer },
-    { name: "content", dataType: DataType.String },
-  ]);
+  // --- Database Setup (Synced from ORM) ---
+  db.createTable(users);
+  db.createTable(posts);
+  db.createTable(comments);
 
   // --- Data Ingestion ---
   db.insertRow("users", [0, "Alice", 30, true]);

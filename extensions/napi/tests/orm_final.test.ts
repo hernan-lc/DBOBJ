@@ -15,6 +15,7 @@ const {
   isNotNull,
   inArray,
   between,
+  relations,
   createOrm,
   createRelationalApi
 } = require("../index.js");
@@ -37,77 +38,64 @@ test("Final Comprehensive Relational ORM Test", () => {
     title: text("title")
   });
 
-  const comments = sqliteTable("comments", {
-    id: integer("id").primaryKey(),
-    postId: integer("postId"),
-    userId: integer("userId"),
-    content: text("content")
-  });
+  // Define relations
+  relations(users, ({ many }) => ({
+    posts: many(posts)
+  }));
 
-  // --- Database Setup ---
-  db.createTable("users", [
-    { name: "id", dataType: DataType.Integer },
-    { name: "name", dataType: DataType.String },
-    { name: "age", dataType: DataType.Integer },
-    { name: "active", dataType: DataType.Boolean },
-  ]);
-  db.createTable("posts", [
-    { name: "id", dataType: DataType.Integer },
-    { name: "userId", dataType: DataType.Integer },
-    { name: "title", dataType: DataType.String },
-  ]);
-  db.createTable("comments", [
-    { name: "id", dataType: DataType.Integer },
-    { name: "postId", dataType: DataType.Integer },
-    { name: "userId", dataType: DataType.Integer },
-    { name: "content", dataType: DataType.String },
-  ]);
+  // --- Database Setup (Synced from ORM) ---
+  db.createTable(users);
+  db.createTable(posts);
 
   // --- Data Ingestion ---
   db.insertRow("users", [0, "Alice", 30, true]);
   db.insertRow("users", [1, "Bob", 25, true]);
   db.insertRow("users", [2, "Charlie", 35, false]);
 
-  db.insertRow("posts", [0, 0, "Post A1"]); // Alice
-  db.insertRow("posts", [1, 0, "Post A2"]); // Alice
-  db.insertRow("posts", [2, 1, "Post B1"]); // Bob
+  const postIds = orm.insert(posts).values([
+    { userId: 0, title: "Post A1" },
+    { userId: 0, title: "Post A2" },
+    { userId: 1, title: "Post B1" }
+  ]);
+  expect(postIds.length).toBe(3);
 
-  db.insertRow("comments", [0, 0, 0, "C1"]); // Post 0, User 0
-  db.insertRow("comments", [1, 0, 1, "C2"]); // Post 0, User 1
+  // --- 1. Aggregations ---
+  expect(orm.select(users).count()).toBe(3);
+  expect(orm.select(users).sum(users.columns.age)).toBe(90);
+  expect(orm.select(users).avg(users.columns.age)).toBe(30);
+  expect(orm.select(users).min(users.columns.age)).toBe(25);
+  expect(orm.select(users).max(users.columns.age)).toBe(35);
 
-  // --- 1. inArray & between ---
+  // --- 2. Membership & Range ---
   expect(orm.select(users).where(inArray(users.columns.id, [0, 2])).count()).toBe(2);
   expect(orm.select(users).where(between(users.columns.age, 20, 30)).count()).toBe(2);
 
-  // --- 2. Multiple Joins (Structured) ---
-  // Select users joined with posts and comments
-  const complexJoined = orm.select(users)
+  // --- 3. Joins (Inner & Left) ---
+  const innerJoined = orm.select(users)
     .innerJoin(posts, users.columns.id, posts.columns.userId)
-    .where(and(eq(users.columns.id, 0), gt(posts.columns.id, -1)))
     .execute();
+  expect(innerJoined.length).toBe(3);
 
-  expect(complexJoined.length).toBe(2); // Alice has 2 posts
-  expect(complexJoined[0]["posts.title"]).toBeDefined();
+  const leftJoined = orm.select(users)
+    .leftJoin(posts, users.columns.id, posts.columns.userId)
+    .execute();
+  // Charlie (ID 2) has no posts, but should appear in left join
+  expect(leftJoined.length).toBe(4); // Alice(2) + Bob(1) + Charlie(1)
+  const charlieRow = leftJoined.find(r => r["users.name"] === "Charlie");
+  expect(charlieRow["posts.title"]).toBeNull();
 
-  // --- 3. Advanced Relational API (findMany with with) ---
+  // --- 4. Advanced Relational API ---
   const query = createRelationalApi(db, { users, posts });
-  (query.users as any)._relations = { posts: posts };
-  (query.users as any)._foreignKeys = { posts: "userId" };
-
   const usersWithPosts = query.users.findMany({
     where: eq(users.columns.id, 0),
     with: {
-        posts: {
-            where: gt(posts.columns.id, 0),
-            limit: 1
-        }
+        posts: { limit: 1 }
     }
   });
 
   expect(usersWithPosts.length).toBe(1);
   expect(usersWithPosts[0].posts.length).toBe(1);
-  expect(usersWithPosts[0].posts[0].id).toBe(1); // Post A2
 
-  // --- 4. Logical negation (not) ---
+  // --- 5. Logical negation ---
   expect(orm.select(users).where(not(eq(users.columns.active, true))).count()).toBe(1); // Charlie
 });

@@ -68,3 +68,11 @@ export function between<T>(col: Column<T>, min: T, max: T): QueryExpr {
 export function notBetween<T>(col: Column<T>, min: T, max: T): QueryExpr {
   return { not: between(col, min, max) };
 }
+
+export function asc(col: Column<any>): { column: string; desc: boolean } {
+  return { column: col.name, desc: false };
+}
+
+export function desc(col: Column<any>): { column: string; desc: boolean } {
+  return { column: col.name, desc: true };
+}
