@@ -1,4 +1,5 @@
-import { Table, Column, TableConfig, DataType } from "./schema";
+import { Table, Column, TableConfig } from "./schema";
+import { QueryExpr, Database } from "../../index.d";
 
 export type InferSelectModel<T extends Table<any>> = {
   [K in keyof T["columns"]]: T["columns"][K]["_type"];
@@ -9,33 +10,33 @@ export type InferInsertModel<T extends Table<any>> = {
 } & { id?: number };
 
 export class SelectBuilder<T extends Table<any>> {
-  private _where?: any;
+  private _where?: QueryExpr;
   private _limit?: number;
   private _offset?: number;
   private _columns?: string[];
   private _orderBy?: Array<{ column: string; desc?: boolean }>;
 
-  constructor(private db: any, private table: T) {}
+  constructor(private db: Database, private table: T) {}
 
-  where(expr: any) {
+  where(expr: QueryExpr): this {
     this._where = expr;
     return this;
   }
 
-  limit(n: number) {
+  limit(n: number): this {
     this._limit = n;
     return this;
   }
 
-  offset(n: number) {
+  offset(n: number): this {
     this._offset = n;
     return this;
   }
 
-  orderBy(...orders: Array<Column | { column: Column; desc?: boolean }>) {
+  orderBy(...orders: Array<Column<unknown> | { column: Column<unknown>; desc?: boolean }>): this {
     this._orderBy = orders.map(o => {
       if ("name" in o) return { column: o.name };
-      return { column: (o.column as any).name, desc: o.desc };
+      return { column: o.column.name, desc: o.desc };
     });
     return this;
   }
@@ -53,55 +54,55 @@ export class SelectBuilder<T extends Table<any>> {
 }
 
 export class InsertBuilder<T extends Table<any>> {
-  constructor(private db: any, private table: T) {}
+  constructor(private db: Database, private table: T) {}
 
-  values(data: InferInsertModel<T> | InferInsertModel<T>[]) {
+  values(data: InferInsertModel<T> | InferInsertModel<T>[]): this {
     const rows = Array.isArray(data) ? data : [data];
     for (const row of rows) {
         const values = Object.values(row);
-        this.db.insertRow(this.table.name, values);
+        this.db.insertRow(this.table.name, values as any[]);
     }
     return this;
   }
 }
 
 export class UpdateBuilder<T extends Table<any>> {
-  private _where?: any;
+  private _where?: QueryExpr;
 
-  constructor(private db: any, private table: T, private values: Partial<InferInsertModel<T>>) {}
+  constructor(private db: Database, private table: T, private values: Partial<InferInsertModel<T>>) {}
 
-  where(expr: any) {
+  where(expr: QueryExpr): this {
     this._where = expr;
     return this;
   }
 
-  execute() {
+  execute(): number {
     if (!this._where) throw new Error("Update requires a where clause");
-    return this.db.updateStructured(this.table.name, this._where, this.values as any);
+    return this.db.updateStructured(this.table.name, this._where, this.values as Record<string, unknown>);
   }
 }
 
 export class DeleteBuilder<T extends Table<any>> {
-  private _where?: any;
+  private _where?: QueryExpr;
 
-  constructor(private db: any, private table: T) {}
+  constructor(private db: Database, private table: T) {}
 
-  where(expr: any) {
+  where(expr: QueryExpr): this {
     this._where = expr;
     return this;
   }
 
-  execute() {
+  execute(): number {
     if (!this._where) throw new Error("Delete requires a where clause");
     return this.db.deleteStructured(this.table.name, this._where);
   }
 }
 
-export function createOrm(db: any) {
+export function createOrm(db: Database) {
   return {
-    select: (table: Table<any>) => new SelectBuilder(db, table),
-    insert: (table: Table<any>) => new InsertBuilder(db, table),
-    update: (table: Table<any>, values: any) => new UpdateBuilder(db, table, values),
-    delete: (table: Table<any>) => new DeleteBuilder(db, table),
+    select: <T extends TableConfig>(table: Table<T>) => new SelectBuilder(db, table),
+    insert: <T extends TableConfig>(table: Table<T>) => new InsertBuilder(db, table),
+    update: <T extends TableConfig>(table: Table<T>, values: Partial<InferInsertModel<Table<T>>>) => new UpdateBuilder(db, table, values),
+    delete: <T extends TableConfig>(table: Table<T>) => new DeleteBuilder(db, table),
   };
 }

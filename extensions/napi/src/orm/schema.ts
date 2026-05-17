@@ -12,7 +12,7 @@ export enum DataType {
 
 export type ColumnType = DataType;
 
-export interface Column<T = any> {
+export interface Column<T = unknown> {
   name: string;
   type: ColumnType;
   primaryKey?: boolean;
@@ -20,29 +20,48 @@ export interface Column<T = any> {
   _type: T; // Phantom type for inference
 }
 
-export type TableConfig = Record<string, Column>;
+export type TableConfig = Record<string, Column<unknown>>;
 
 export class Table<T extends TableConfig> {
   constructor(public name: string, public columns: T) {}
 }
 
-export function sqliteTable<T extends Record<string, any>>(
+export function sqliteTable<T extends Record<string, unknown>>(
   name: string,
   columns: { [K in keyof T]: Column<T[K]> }
 ): Table<{ [K in keyof T]: Column<T[K]> }> {
   return new Table(name, columns);
 }
 
+interface IntegerColumnBuilder extends Column<number> {
+  primaryKey: () => IntegerColumnBuilder;
+  notNull: () => IntegerColumnBuilder;
+}
+
 // Column Helpers
-export function integer(name: string): { primaryKey: () => Column<number>; notNull: () => Column<number> } & Column<number> {
-  const col: any = { name, type: DataType.Integer, _type: 0 as number };
+export function integer(name: string): IntegerColumnBuilder {
+  const col = {
+    name,
+    type: DataType.Integer,
+    _type: 0 as number,
+  } as IntegerColumnBuilder;
+
   col.primaryKey = () => ({ ...col, primaryKey: true });
   col.notNull = () => ({ ...col, notNull: true });
   return col;
 }
 
-export function text(name: string): { notNull: () => Column<string> } & Column<string> {
-  const col: any = { name, type: DataType.String, _type: "" as string };
+interface TextColumnBuilder extends Column<string> {
+  notNull: () => TextColumnBuilder;
+}
+
+export function text(name: string): TextColumnBuilder {
+  const col = {
+    name,
+    type: DataType.String,
+    _type: "" as string
+  } as TextColumnBuilder;
+
   col.notNull = () => ({ ...col, notNull: true });
   return col;
 }

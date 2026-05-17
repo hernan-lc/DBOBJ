@@ -1,26 +1,27 @@
-import { QueryExpr, Column } from "./schema";
+import { Column } from "./schema";
+import { QueryExpr } from "../../index.d";
 
-export function eq(col: Column, val: any): QueryExpr {
+export function eq<T>(col: Column<T>, val: T): QueryExpr {
   return { op: "eq", left: { column: col.name }, right: { literal: val } };
 }
 
-export function ne(col: Column, val: any): QueryExpr {
+export function ne<T>(col: Column<T>, val: T): QueryExpr {
   return { op: "neq", left: { column: col.name }, right: { literal: val } };
 }
 
-export function gt(col: Column, val: any): QueryExpr {
+export function gt<T>(col: Column<T>, val: T): QueryExpr {
   return { op: "gt", left: { column: col.name }, right: { literal: val } };
 }
 
-export function gte(col: Column, val: any): QueryExpr {
+export function gte<T>(col: Column<T>, val: T): QueryExpr {
   return { op: "gte", left: { column: col.name }, right: { literal: val } };
 }
 
-export function lt(col: Column, val: any): QueryExpr {
+export function lt<T>(col: Column<T>, val: T): QueryExpr {
   return { op: "lt", left: { column: col.name }, right: { literal: val } };
 }
 
-export function lte(col: Column, val: any): QueryExpr {
+export function lte<T>(col: Column<T>, val: T): QueryExpr {
   return { op: "lte", left: { column: col.name }, right: { literal: val } };
 }
 
@@ -40,14 +41,14 @@ export function not(expr: QueryExpr): QueryExpr {
   return { not: expr };
 }
 
-export function isNull(col: Column): QueryExpr {
+export function isNull(col: Column<unknown>): QueryExpr {
   return { op: "eq", left: { column: col.name }, right: { literal: null } };
 }
 
-export function isNotNull(col: Column): QueryExpr {
+export function isNotNull(col: Column<unknown>): QueryExpr {
   return { op: "neq", left: { column: col.name }, right: { literal: null } };
 }
 
-export function like(col: Column, pattern: string): QueryExpr {
+export function like(col: Column<string>, pattern: string): QueryExpr {
   return { op: "like", left: { column: col.name }, right: { literal: pattern } };
 }
