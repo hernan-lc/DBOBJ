@@ -9,7 +9,7 @@ export type InferInsertModel<T extends Table<any>> = {
   [K in keyof T["columns"]]: T["columns"][K]["_type"];
 } & { id?: number };
 
-export class SelectBuilder<T extends Table<any>> {
+export class SelectBuilder<T extends Table<any>, R = InferSelectModel<T>> {
   private _where?: QueryExpr;
   private _limit?: number;
   private _offset?: number;
@@ -19,13 +19,13 @@ export class SelectBuilder<T extends Table<any>> {
 
   constructor(private db: Database, private table: T) {}
 
-  innerJoin<U extends Table<any>>(other: U, onLeft: Column<any>, onRight: Column<any>): this {
+  innerJoin<U extends Table<any>>(other: U, onLeft: Column<any>, onRight: Column<any>): SelectBuilder<T, R & InferSelectModel<U>> {
     this._join = {
       table: other.name,
       onLeft: onLeft.name,
       onRight: onRight.name
     };
-    return this;
+    return this as any;
   }
 
   where(expr: QueryExpr): this {
@@ -51,7 +51,20 @@ export class SelectBuilder<T extends Table<any>> {
     return this;
   }
 
-  execute(): any[] {
+  count(): number {
+    const results = this.db.select(
+        this.table.name,
+        this._where || null,
+        ["id"],
+        this._orderBy || null,
+        this._join || null,
+        null,
+        null
+    );
+    return results.length;
+  }
+
+  execute(): R[] {
     return this.db.select(
       this.table.name,
       this._where || null,
@@ -111,7 +124,7 @@ export class DeleteBuilder<T extends Table<any>> {
 
 export function createOrm(db: Database) {
   return {
-    select: <T extends TableConfig>(table: Table<T>) => new SelectBuilder(db, table),
+    select: <T extends TableConfig>(table: Table<T>) => new SelectBuilder<Table<T>>(db, table),
     insert: <T extends TableConfig>(table: Table<T>) => new InsertBuilder(db, table),
     update: <T extends TableConfig>(table: Table<T>, values: Partial<InferInsertModel<Table<T>>>) => new UpdateBuilder(db, table, values),
     delete: <T extends TableConfig>(table: Table<T>) => new DeleteBuilder(db, table),

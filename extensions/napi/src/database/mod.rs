@@ -1456,8 +1456,30 @@ impl Database {
             })?;
             let other_table_ref = other_lock.read();
 
-            let mut results = Vec::with_capacity(joined_rows.len());
-            for (r1, r2) in joined_rows {
+            let filtered_rows = if let Some(q) = query_obj {
+                let expr = json_to_expr(&q)?;
+                let mut results = Vec::new();
+
+                // For joined rows, we need to map column names to include the table prefix
+                let mut mapping = dbobj::FastHashMap::default();
+                for (i, col) in table.schema.columns.iter().enumerate() {
+                    mapping.insert(format!("{}.{}", table_name, col.name), i);
+                    mapping.insert(col.name.to_string(), i);
+                }
+
+                for (r1, r2) in joined_rows {
+                    if expr.is_true(&r1, &mapping, &table) {
+                        results.push((r1, r2));
+                    }
+                }
+                results
+            } else {
+                joined_rows
+            };
+            let other_table_ref = other_lock.read();
+
+            let mut results = Vec::with_capacity(filtered_rows.len());
+            for (r1, r2) in filtered_rows {
                 let mut map = serde_json::Map::new();
 
                 // Add fields from primary table with prefix
