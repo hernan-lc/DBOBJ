@@ -24,6 +24,14 @@ export type TableConfig = Record<string, Column<unknown>>;
 
 export class Table<T extends TableConfig> {
   constructor(public name: string, public columns: T) {}
+
+  getDefinitions(): any[] {
+    return Object.values(this.columns).map(col => ({
+      name: col.name,
+      dataType: col.type,
+      nullable: !col.notNull
+    }));
+  }
 }
 
 export function sqliteTable<T extends Record<string, unknown>>(
