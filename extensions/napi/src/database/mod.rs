@@ -1433,6 +1433,7 @@ impl Database {
         query_obj: Option<serde_json::Value>,
         columns: Option<Vec<String>>,
         order_by: Option<Vec<serde_json::Value>>,
+        join_obj: Option<serde_json::Value>,
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<serde_json::Value> {
@@ -1440,6 +1441,39 @@ impl Database {
             napi::Error::from_reason(format!("Table {} not found", table_name))
         })?;
         let table = table_lock.read();
+
+        if let Some(join) = join_obj {
+            let obj = join.as_object().ok_or_else(|| napi::Error::from_reason("Join must be an object"))?;
+            let other_table = obj.get("table").and_then(|t| t.as_str()).ok_or_else(|| napi::Error::from_reason("Join requires 'table'"))?;
+            let on_left = obj.get("onLeft").and_then(|t| t.as_str()).ok_or_else(|| napi::Error::from_reason("Join requires 'onLeft'"))?;
+            let on_right = obj.get("onRight").and_then(|t| t.as_str()).ok_or_else(|| napi::Error::from_reason("Join requires 'onRight'"))?;
+
+            let joined_rows = self.inner.hash_join(&table_name, on_left, other_table, on_right)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+            let other_lock = self.inner.get_table(other_table).ok_or_else(|| {
+                napi::Error::from_reason(format!("Table {} not found", other_table))
+            })?;
+            let other_table_ref = other_lock.read();
+
+            let mut results = Vec::with_capacity(joined_rows.len());
+            for (r1, r2) in joined_rows {
+                let mut map = serde_json::Map::new();
+
+                // Add fields from primary table with prefix
+                for (i, col) in table.schema.columns.iter().enumerate() {
+                    let key = format!("{}.{}", table_name, col.name);
+                    map.insert(key, query::db_value_to_json(&r1.data[i], &table));
+                }
+                // Add fields from joined table with prefix
+                for (i, col) in other_table_ref.schema.columns.iter().enumerate() {
+                    let key = format!("{}.{}", other_table, col.name);
+                    map.insert(key, query::db_value_to_json(&r2.data[i], &other_table_ref));
+                }
+                results.push(serde_json::Value::Object(map));
+            }
+            return Ok(serde_json::Value::Array(results));
+        }
 
         let mut rows = if let Some(q) = query_obj {
             let expr = json_to_expr(&q)?;

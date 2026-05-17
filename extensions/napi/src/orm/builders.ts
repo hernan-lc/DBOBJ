@@ -15,8 +15,18 @@ export class SelectBuilder<T extends Table<any>> {
   private _offset?: number;
   private _columns?: string[];
   private _orderBy?: Array<{ column: string; desc?: boolean }>;
+  private _join?: { table: string, onLeft: string, onRight: string };
 
   constructor(private db: Database, private table: T) {}
+
+  innerJoin<U extends Table<any>>(other: U, onLeft: Column<any>, onRight: Column<any>): this {
+    this._join = {
+      table: other.name,
+      onLeft: onLeft.name,
+      onRight: onRight.name
+    };
+    return this;
+  }
 
   where(expr: QueryExpr): this {
     this._where = expr;
@@ -41,15 +51,16 @@ export class SelectBuilder<T extends Table<any>> {
     return this;
   }
 
-  execute(): InferSelectModel<T>[] {
+  execute(): any[] {
     return this.db.select(
       this.table.name,
       this._where || null,
       this._columns || null,
       this._orderBy || null,
+      this._join || null,
       this._limit || null,
       this._offset || null
-    ) as InferSelectModel<T>[];
+    );
   }
 }
 
